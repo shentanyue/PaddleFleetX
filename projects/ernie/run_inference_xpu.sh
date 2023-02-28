@@ -1,5 +1,3 @@
-#! /bin/bash
-
 # Copyright (c) 2022 PaddlePaddle Authors. All Rights Reserved.
 # 
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-log_dir=log_mp1
-rm -rf $log_dir
-
-python -m paddle.distributed.launch --log_dir $log_dir --devices "0,1,2,3" \
-    ./tools/auto_export.py \
-    -c ./ppfleetx/configs/nlp/gpt/auto/generation_gpt_6.7B_mp1.yaml
+export BKCL_PCIE_RING=1
+python -u -m paddle.distributed.launch \
+    --devices "0" \
+    --log_dir "log" \
+    projects/ernie/inference.py --model_dir "./output/" --mp_degree 1

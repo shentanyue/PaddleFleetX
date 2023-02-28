@@ -1,3 +1,4 @@
+
 #! /bin/bash
 
 # Copyright (c) 2022 PaddlePaddle Authors. All Rights Reserved.
@@ -14,9 +15,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-log_dir=log_mp1
+
+log_dir=log_auto
 rm -rf $log_dir
 
-python -m paddle.distributed.launch --log_dir $log_dir --devices "0,1,2,3" \
+FILENAME=./ppfleetx/configs/nlp/ernie/auto/finetune_ernie_base.yaml
+sed -i "s/device: gpu/device: xpu/g" $FILENAME
+
+# 345M mp2 export
+python -m paddle.distributed.launch --log_dir $log_dir --devices "0" \
     ./tools/auto_export.py \
-    -c ./ppfleetx/configs/nlp/gpt/auto/generation_gpt_6.7B_mp1.yaml
+    -c ./ppfleetx/configs/nlp/ernie/auto/finetune_ernie_345M_single_card.yaml \
+    -o Distributed.mp_degree=1 \

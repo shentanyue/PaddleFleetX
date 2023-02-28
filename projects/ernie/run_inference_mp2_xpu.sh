@@ -16,4 +16,4 @@ export BKCL_PCIE_RING=1
 python -u -m paddle.distributed.launch \
     --devices "0,1" \
     --log_dir "log" \
-    projects/ernie/inference.py --model_dir "./output" --mp_degree 2
+    projects/ernie/inference.py --model_dir "./output_mp2" --mp_degree 2

@@ -14,7 +14,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-log_dir=log_mp1
-rm -rf $log_dir
+# log_dir=log_mp1
+# rm -rf $log_dir
 
-python  projects/gpt/inference.py --mp_degree 1 --model_dir output
+# python  projects/gpt/inference.py --mp_degree 1 --model_dir output
+
+# 345M mp2
+python -u -m paddle.distributed.launch \
+    --devices "0,1" \
+    --log_dir "gpt345m_log" \
+    projects/gpt/inference.py --model_dir "./output" --mp_degree 2
+
+# 6.7B mp4
+# python -u -m paddle.distributed.launch \
+#     --devices "0,1,2,3" \
+#     --log_dir "gpt6.7b_log" \
+#     projects/gpt/inference.py --model_dir "./output" --mp_degree 4
