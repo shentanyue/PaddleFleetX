@@ -17,13 +17,14 @@
 # log_dir=log_mp1
 # rm -rf $log_dir
 
+# 345M mp1
 # python  projects/gpt/inference.py --mp_degree 1 --model_dir output
 
 # 345M mp2
 python -u -m paddle.distributed.launch \
     --devices "0,1" \
     --log_dir "gpt345m_log" \
-    projects/gpt/inference.py --model_dir "./output" --mp_degree 2
+    projects/gpt/inference.py --model_dir "./output_gpt3_345M" --mp_degree 2
 
 # 6.7B mp4
 # python -u -m paddle.distributed.launch \

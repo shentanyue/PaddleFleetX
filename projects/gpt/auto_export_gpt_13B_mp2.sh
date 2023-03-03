@@ -14,13 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-log_dir=log_mp2
+log_dir=log_mp1
 rm -rf $log_dir
 
-# python -m paddle.distributed.launch --log_dir $log_dir --devices "0,1" \
-#     ./tools/auto_export.py \
-#     -c ./ppfleetx/configs/nlp/gpt/auto/generation_gpt_345M_mp2.yaml \
-
-python -m paddle.distributed.launch --log_dir $log_dir --devices "0" \
+python -m paddle.distributed.launch --log_dir $log_dir --devices "2,3" \
     ./tools/auto_export.py \
-    -c ./ppfleetx/configs/nlp/gpt/auto/generation_gpt_345M_mp2.yaml \
+    -c ./ppfleetx/configs/nlp/gpt/auto/generation_gpt_13B_mp2.yaml

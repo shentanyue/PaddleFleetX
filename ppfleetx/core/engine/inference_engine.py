@@ -18,6 +18,7 @@ from collections.abc import Sequence, Mapping
 
 import paddle
 import paddle.distributed.fleet as fleet
+paddle.seed(1234)
 
 # TensorRT precisions
 TRT_PRECISIONS = {
@@ -196,6 +197,9 @@ class InferenceEngine(object):
             device_id = int(os.environ.get('FLAGS_selected_xpus', 0))
             config.enable_xpu()
             config.set_xpu_device_id(device_id)
+            config.delete_pass("multi_encoder_xpu_fuse_pass")
+            # config.delete_pass("fc_xpu_fuse_pass")
+            # config.enable_profile()
 
         # distributed config
         if self.mp_degree > 1:

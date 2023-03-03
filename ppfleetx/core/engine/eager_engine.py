@@ -23,7 +23,7 @@ import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 from paddle.optimizer.lr import LRScheduler
 
-from paddle.fluid.dygraph.parallel import sync_params_buffers
+# from paddle.fluid.dygraph.parallel import sync_params_buffers
 from paddle.distributed.fleet.utils.hybrid_parallel_util import fused_allreduce_gradients
 from paddle.profiler import SummaryView
 from paddle.distributed.fleet.meta_parallel import TensorParallel
@@ -257,11 +257,11 @@ class EagerEngine(BasicEngine):
             self._wrap_3D_parallel()
 
     def _wrap_sharding_2_3(self):
-        if self._dp_degree > 1 and self._sharding_stage == 3:
-            sync_params_buffers(
-                self._module.model,
-                comm_group=self._dp_group,
-                src_rank=self._dp_group.ranks[0])
+        # if self._dp_degree > 1 and self._sharding_stage == 3:
+        #     sync_params_buffers(
+        #         self._module.model,
+        #         comm_group=self._dp_group,
+        #         src_rank=self._dp_group.ranks[0])
 
         if self._mp_degree > 1:
             assert self._sharding_stage == 2, "only support mp + sharding stage2 hybrid parallel now."

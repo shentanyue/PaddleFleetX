@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 import os
+from pprint import pprint
 import time
 import argparse
 import numpy as np
@@ -53,7 +54,7 @@ def main():
     # run test
 
     outs = infer_engine.predict([ids])
-
+    print("outs: ", outs)
     ids = list(outs.values())[0]
     out_ids = [int(x) for x in ids[0]]
     result = tokenizer.decode(out_ids)
