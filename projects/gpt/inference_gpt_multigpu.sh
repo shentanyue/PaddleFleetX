@@ -1,6 +1,6 @@
 #! /bin/bash
 
-# Copyright (c) 2022 PaddlePaddle Authors. All Rights Reserved.
+# Copyright (c) 2023 PaddlePaddle Authors. All Rights Reserved.
 # 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,19 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# log_dir=log_mp1
-# rm -rf $log_dir
-# 345M mp1
-# python  projects/gpt/inference.py --mp_degree 1 --model_dir output
+log_dir=log_mp1
+rm -rf $log_dir
 
-# 345M mp2
-python -u -m paddle.distributed.launch \
-    --devices "0,1" \
-    --log_dir "gpt345m_log" \
-    projects/gpt/inference.py --model_dir "./output_gpt3_345M" --mp_degree 2
+export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
+export MP=8
 
-# 6.7B mp4
-# python -u -m paddle.distributed.launch \
-#     --devices "0,1,2,3" \
-#     --log_dir "gpt6.7b_log" \
-#     projects/gpt/inference.py --model_dir "./output" --mp_degree 4
+python -m paddle.distributed.launch --devices "0,1,2,3,4,5,6,7" projects/gpt/inference.py --mp_degree ${MP} --model_dir output

@@ -16,6 +16,10 @@
 
 import collections
 import logging
+from distutils.util import strtobool
+import os
+import numpy as np
+import math
 
 import paddle
 import paddle.nn as nn
@@ -34,6 +38,12 @@ from .processor import (
 
 from ppfleetx.models.language_model.moe import MoELayer
 from ppfleetx.models.language_model.moe_exp.layer import MoE
+
+from ppfleetx.utils.log import logger
+try:
+    from paddle.nn.functional.flash_attention import flash_attention
+except:
+    flash_attention = None
 
 
 def get_attr(layer, name):
@@ -90,12 +100,14 @@ class MultiHeadAttention(nn.Layer):
                  need_weights=False,
                  weight_attr=None,
                  bias_attr=None,
+                 output_layer_weight_attr=None,
                  fuse_attn_qkv=False,
                  scale_qk_coeff=1.0,
                  fused_linear=False,
                  use_recompute=False,
                  recompute_granularity="full",
-                 do_recompute=True):
+                 do_recompute=True,
+                 use_flash_attn=False):
         super(MultiHeadAttention, self).__init__()
         self.embed_dim = embed_dim
         self.kdim = kdim if kdim is not None else embed_dim
@@ -108,6 +120,7 @@ class MultiHeadAttention(nn.Layer):
         self.use_recompute = use_recompute
         self.recompute_granularity = recompute_granularity
         self.do_recompute = do_recompute
+        self.use_flash_attn = use_flash_attn if flash_attention else None
 
         self.head_dim = embed_dim // num_heads
         assert self.head_dim * \
@@ -129,12 +142,14 @@ class MultiHeadAttention(nn.Layer):
                 self.vdim, embed_dim, weight_attr, bias_attr=bias_attr)
 
         self.out_proj = Linear(
-            embed_dim, embed_dim, weight_attr, bias_attr=bias_attr)
+            embed_dim,
+            embed_dim,
+            output_layer_weight_attr,
+            bias_attr=bias_attr)
 
     def _fuse_prepare_qkv(self, query, use_cache=False, cache=None):
         mix_layer = self.qkv_proj(query)
         mix_layer = paddle.reshape_(mix_layer, [0, 0, -1, 3 * self.head_dim])
-        mix_layer = paddle.transpose(mix_layer, [0, 2, 1, 3])
         q, k, v = paddle.split(mix_layer, num_or_sections=3, axis=-1)
 
         assert not isinstance(
@@ -143,12 +158,12 @@ class MultiHeadAttention(nn.Layer):
 
         if isinstance(cache, self.Cache):
             # for decoder self-attention in inference
-            k = tensor.concat([cache.k, k], axis=2)
-            v = tensor.concat([cache.v, v], axis=2)
+            k = tensor.concat([cache.k, k], axis=1)
+            v = tensor.concat([cache.v, v], axis=1)
         if use_cache is True:
             cache = self.Cache(k, v)
 
-        return (q, k, v) if use_cache is False else (q, k, v, cache)
+        return (q, k, v, cache) if use_cache else (q, k, v, None)
 
     def _prepare_qkv(self, query, key, value, use_cache=False, cache=None):
         r"""
@@ -159,7 +174,6 @@ class MultiHeadAttention(nn.Layer):
         """
         q = self.q_proj(query)
         q = tensor.reshape(x=q, shape=[0, 0, -1, self.head_dim])
-        q = tensor.transpose(x=q, perm=[0, 2, 1, 3])
 
         if isinstance(cache, self.StaticCache):
             # for encoder-decoder attention in inference and has cached
@@ -169,12 +183,12 @@ class MultiHeadAttention(nn.Layer):
 
         if isinstance(cache, self.Cache):
             # for decoder self-attention in inference
-            k = tensor.concat([cache.k, k], axis=2)
-            v = tensor.concat([cache.v, v], axis=2)
+            k = tensor.concat([cache.k, k], axis=1)
+            v = tensor.concat([cache.v, v], axis=1)
         if use_cache is True:
             cache = self.Cache(k, v)
 
-        return (q, k, v) if use_cache is False else (q, k, v, cache)
+        return (q, k, v, cache) if use_cache else (q, k, v, None)
 
     def compute_kv(self, key, value):
         r"""
@@ -191,9 +205,7 @@ class MultiHeadAttention(nn.Layer):
         k = self.k_proj(key)
         v = self.v_proj(value)
         k = tensor.reshape(x=k, shape=[0, 0, -1, self.head_dim])
-        k = tensor.transpose(x=k, perm=[0, 2, 1, 3])
         v = tensor.reshape(x=v, shape=[0, 0, -1, self.head_dim])
-        v = tensor.transpose(x=v, perm=[0, 2, 1, 3])
         return k, v
 
     def gen_cache(self, key, value=None, type=Cache):
@@ -221,7 +233,23 @@ class MultiHeadAttention(nn.Layer):
             # incremental_state with initial value, mainly for usage like UniLM
             return self.Cache(key, value)
 
+    def _flash_attention(self, q, k, v, attn_mask=None):
+        out, weights = flash_attention(
+            q,
+            k,
+            v,
+            self.dropout,
+            causal=True,
+            return_softmax=self.need_weights)
+        out = tensor.reshape(x=out, shape=[0, 0, out.shape[2] * out.shape[3]])
+        return out, weights
+
     def core_attn(self, q, k, v, attn_mask=None):
+        perm = [0, 2, 1, 3]
+        q = tensor.transpose(x=q, perm=perm)
+        k = tensor.transpose(x=k, perm=perm)
+        v = tensor.transpose(x=v, perm=perm)
+
         # scale dot product attention
         scale_qk_coeff = self.scale_qk_coeff * self.head_dim**0.5
         product = paddle.matmul(
@@ -265,22 +293,16 @@ class MultiHeadAttention(nn.Layer):
         key = query if key is None else key
         value = query if value is None else value
         # compute q ,k ,v
-        if use_cache is False:
-            if self.fuse_attn_qkv:
-                q, k, v = self._fuse_prepare_qkv(query, use_cache, cache)
-            else:
-                q, k, v = self._prepare_qkv(query, key, value, use_cache,
-                                            cache)
+        if self.fuse_attn_qkv:
+            q, k, v, cache = self._fuse_prepare_qkv(query, use_cache, cache)
         else:
-            if self.fuse_attn_qkv:
-                q, k, v, cache = self._fuse_prepare_qkv(query, use_cache,
-                                                        cache)
-            else:
-                q, k, v, cache = self._prepare_qkv(query, key, value,
-                                                   use_cache, cache)
+            q, k, v, cache = self._prepare_qkv(query, key, value, use_cache,
+                                               cache)
 
         if self.use_recompute and self.recompute_granularity == "core_attn" and self.do_recompute:
             out, weights = recompute(self.core_attn, q, k, v, attn_mask)
+        elif self.use_flash_attn and attn_mask is None:
+            out, weights = self._flash_attention(q, k, v)
         else:
             out, weights = self.core_attn(q, k, v, attn_mask=attn_mask)
 
@@ -363,8 +385,8 @@ class TransformerDecoder(nn.Layer):
                                         cache=cache[i])
                 new_caches.append(new_cache)
 
-        if self.norm is not None:
-            output = self.norm(output)
+        # if self.norm is not None:
+        #    output = self.norm(output)
         return output if use_cache is False else (output, new_caches)
 
     def gen_cache(self, memory, do_zip=False):
@@ -407,13 +429,15 @@ class TransformerDecoderLayer(nn.Layer):
                  enable_expert_tensor_parallelism=False,
                  weight_attr=None,
                  bias_attr=None,
+                 output_layer_weight_attr=None,
                  fused_linear=False,
                  fuse_attn_qkv=False,
                  scale_qk_coeff=1.0,
                  use_recompute=False,
                  recompute_granularity="full",
                  do_recompute=True,
-                 skip_quant_tensors=[]):
+                 skip_quant_tensors=[],
+                 use_flash_attn=False):
         self._config = locals()
         self._config.pop("self")
         self._config.pop("__class__", None)  # py3
@@ -430,6 +454,8 @@ class TransformerDecoderLayer(nn.Layer):
 
         weight_attrs = _convert_param_attr_to_list(weight_attr, 3)
         bias_attrs = _convert_param_attr_to_list(bias_attr, 3)
+        output_layer_weight_attrs = _convert_param_attr_to_list(
+            output_layer_weight_attr, 3)
 
         Linear = FusedLinear if fused_linear else nn.Linear
 
@@ -439,12 +465,14 @@ class TransformerDecoderLayer(nn.Layer):
             dropout=attn_dropout,
             weight_attr=weight_attrs[0],
             bias_attr=bias_attrs[0],
+            output_layer_weight_attr=output_layer_weight_attrs[0],
             fused_linear=fused_linear,
             fuse_attn_qkv=fuse_attn_qkv,
             scale_qk_coeff=scale_qk_coeff,
             use_recompute=use_recompute,
             recompute_granularity=recompute_granularity,
-            do_recompute=do_recompute)
+            do_recompute=do_recompute,
+            use_flash_attn=use_flash_attn)
 
         self.moe_mlp = None
         if self.num_experts > 1:
@@ -471,7 +499,7 @@ class TransformerDecoderLayer(nn.Layer):
             self.linear2 = Linear(
                 dim_feedforward,
                 d_model,
-                weight_attrs[2],
+                output_layer_weight_attrs[2],
                 bias_attr=bias_attrs[2])
 
             if 'linear1' in skip_quant_tensors:
@@ -492,8 +520,8 @@ class TransformerDecoderLayer(nn.Layer):
     def forward(self, tgt, memory, tgt_mask=None, use_cache=False, cache=None):
         residual = tgt
 
-        if self.normalize_before:
-            tgt = self.norm1(tgt)
+        # if self.normalize_before:
+        #     tgt = self.norm1(tgt)
 
         if use_cache is False:
             if self.use_recompute and self.recompute_granularity == "full_attn" and self.do_recompute:
@@ -505,12 +533,11 @@ class TransformerDecoderLayer(nn.Layer):
             tgt, incremental_cache = self.self_attn(tgt, tgt, tgt, tgt_mask,
                                                     use_cache, cache)
         tgt = residual + self.dropout1(tgt)
-        if not self.normalize_before:
-            tgt = self.norm1(tgt)
-
+        # if not self.normalize_before:
+        #    tgt = self.norm1(tgt)
         residual = tgt
-        if self.normalize_before:
-            tgt = self.norm2(tgt)
+        # if self.normalize_before:
+        #    tgt = self.norm2(tgt)
 
         # if self.expert_mode:
         #     tgt = self.moe_mlp(tgt)
@@ -522,8 +549,8 @@ class TransformerDecoderLayer(nn.Layer):
 
         tgt = residual + tgt
 
-        if not self.normalize_before:
-            tgt = self.norm2(tgt)
+        # if not self.normalize_before:
+        #    tgt = self.norm2(tgt)
 
         return tgt if use_cache is False else (tgt, incremental_cache)
 
@@ -607,7 +634,9 @@ class GPTModel(nn.Layer):
                  sequence_parallel=False,
                  no_recompute_layers=None,
                  skip_tensor_map={},
-                 freeze_embedding=False):
+                 freeze_embedding=False,
+                 use_flash_attn=False,
+                 fused_softmax_with_triangular=False):
 
         super(GPTModel, self).__init__()
 
@@ -616,6 +645,15 @@ class GPTModel(nn.Layer):
         self.initializer_range = initializer_range
         self.hidden_size = hidden_size
         self.vocab_size = vocab_size
+        self.fused_softmax_with_triangular = fused_softmax_with_triangular
+
+        if use_flash_attn:
+            if flash_attention:
+                logger.info("Flash-attention enabled.")
+            else:
+                use_flash_attn = False
+                logger.warning(
+                    "Flash-attention is not support in this Paddle version.")
 
         self.embeddings = GPTEmbeddings(
             vocab_size, hidden_size, hidden_dropout_prob,
@@ -657,6 +695,11 @@ class GPTModel(nn.Layer):
                     weight_attr=paddle.ParamAttr(
                         initializer=nn.initializer.Normal(
                             mean=0.0, std=self.initializer_range)),
+                    output_layer_weight_attr=paddle.ParamAttr(
+                        initializer=nn.initializer.Normal(
+                            mean=0.0,
+                            std=self.initializer_range / math.sqrt(
+                                2.0 * num_layers))),
                     bias_attr=None,
                     fused_linear=fused_linear,
                     fuse_attn_qkv=fuse_attn_qkv,
@@ -666,7 +709,8 @@ class GPTModel(nn.Layer):
                     recompute_granularity=recompute_granularity,
                     do_recompute=i not in no_recompute_layers,
                     skip_quant_tensors=skip_tensor_map.get('block_{}'.format(
-                        i), [])))
+                        i), []),
+                    use_flash_attn=use_flash_attn))
 
         self.decoder = TransformerDecoder(
             decoder_layers,
@@ -695,12 +739,14 @@ class GPTModel(nn.Layer):
             position_ids = position_ids.unsqueeze(0)
             # .expand_as(input_ids)
             position_ids = paddle.expand_as(position_ids, input_ids)
+
         embedding_output = self.embeddings(
             input_ids=input_ids, position_ids=position_ids)
 
-        # fused_soiftmax_with_triangular is only suppported on GPU/DCU.
+        # fused_softmax_with_triangular is only suppported on GPU/DCU.
         # If on non-GPU devices, we use user defined mask and non-fused softmax.
-        if self.training == False or not paddle.is_compiled_with_cuda():
+        if not self.fused_softmax_with_triangular or not paddle.is_compiled_with_cuda(
+        ):
             # TODO, use registered buffer
             causal_mask = paddle.tensor.triu(
                 paddle.ones(
@@ -719,7 +765,8 @@ class GPTModel(nn.Layer):
         encoder_outputs = self.decoder(
             embedding_output,
             memory=None,
-            tgt_mask=None if self.training and paddle.is_compiled_with_cuda()
+            tgt_mask=None if (self.fused_softmax_with_triangular and
+                              self.training and paddle.is_compiled_with_cuda())
             else attention_mask,  # use softmax_mask_fuse_upper_triangle
             use_cache=use_cache,
             cache=cache)
@@ -1201,7 +1248,8 @@ class GPTForGeneration(nn.Layer):
                         shape=[paddle.shape(probs)[0]],
                         fill_value=top_p,
                         dtype=probs.dtype)
-                    next_tokens = topp_sampling(probs, top_ps_tensor)
+                    _, next_tokens = topp_sampling(
+                        probs, top_ps_tensor, random_seed=100)
                 else:
                     probs = TopPProcess(probs, top_p, min_tokens_to_keep)
 
