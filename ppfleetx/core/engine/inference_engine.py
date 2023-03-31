@@ -199,11 +199,12 @@ class InferenceEngine(object):
             config.set_xpu_device_id(device_id)
             config.delete_pass("multi_encoder_xpu_fuse_pass")
             config.delete_pass("embedding_with_eltwise_add_xpu_fuse_pass")
-            # config.delete_pass("fc_xpu_fuse_pass")
-            # config.delete_pass("fused_multi_transformer_xpu_quant_pass")
+            #config.delete_pass("fc_xpu_fuse_pass")
+            #config.delete_pass("fused_multi_transformer_xpu_quant_pass")
             config.delete_pass("embedding_with_eltwise_add_xpu_fuse_pass")
             config.delete_pass("multi_encoder_xpu_slice_fuse_pass")
             config.delete_pass("delete_isolated_node_pass")
+            config.delete_pass("one_beam_size_fuse_pass")
             # config.enable_profile()
 
         # distributed config
@@ -257,15 +258,31 @@ class InferenceEngine(object):
                     raise ValueError()
                 for d, name in zip(data, self.input_names()):
                     handle = self.predictor.get_input_handle(name)
+                    #handle.copy_from_cpu(np.load("/Work/ernie_guanxing_0320/npy_file/" + name + ".npy"))
                     handle.copy_from_cpu(np.array(d.copy()))
+                    #names = ["tgt_ids", "tgt_pos", "init_scopre", "tgt_pos_extra"]
+                    #if name in names:
+                    #    handle.set_lod([[0,1],[0,1]])
             elif isinstance(data, Mapping):
                 # key check
                 for k, v in data.items():
                     handle = self.predictor.get_input_handle(k)
                     handle.copy_from_cpu(np.array(v))
+                    #handle.copy_from_cpu(np.load("/Work/ernie_guanxing_0320/npy_file/" + k + ".npy"))
+                    #names = ["tgt_ids", "tgt_pos", "init_scopre", "tgt_pos_extra"]
+                    #if k in names:
+                    #    handle.set_lod([[0,1],[0,1]])
             else:
                 raise ValueError()
 
+            self.predictor.run()
+            return {name: self.predictor.get_output_handle(name).copy_to_cpu() \
+                    for name in self.output_names()}
+
+
+    def predict_guanxing(self):
+        # data in dict/list format
+        with self._static_guard:
             self.predictor.run()
             return {name: self.predictor.get_output_handle(name).copy_to_cpu() \
                     for name in self.output_names()}

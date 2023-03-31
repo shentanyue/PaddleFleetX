@@ -21,7 +21,13 @@ export BKCL_PCIE_RING=1
 #     --log_dir $log_dir \
 #     projects/ernie/inference_ernie10b_decoder.py --model_dir "./models/ernie_decoder/" --mp_degree 2
 
+#python -u -m paddle.distributed.launch \
+#    --devices "0,1" \
+#    --log_dir $log_dir \
+#    projects/ernie/inference_ernie10b_decoder.py --model_dir "./models/ernie_decoder_fused/" --mp_degree 2
+
 python -u -m paddle.distributed.launch \
-    --devices "0,3" \
+    --devices "0,1" \
     --log_dir $log_dir \
-    projects/ernie/inference_ernie10b_decoder.py --model_dir "./models/ernie_decoder_fused/" --mp_degree 2
+    projects/ernie/inference_ernie10b_decoder.py --model_dir "/Work/models/guanxing_inference_models/inference_model_fused_pp1mp2" --mp_degree 2
+

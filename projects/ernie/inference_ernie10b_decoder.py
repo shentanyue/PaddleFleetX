@@ -50,23 +50,24 @@ def main(args):
     #     np.array(inputs['src_ids']).reshape(1, -1),
     #     np.array(inputs['pos_ids']).reshape(1, -1),
     #     np.array(inputs['input_mask']).reshape(1, -1)
-    # ]
+    # 
     whole_data = [
-        np.random.random((1, 4)).astype(np.int64), np.random.random(
-            (1, 4)).astype(np.int64), np.random.random(
-                (1, 4, 4)).astype(np.float32), np.random.random(
-                    (1, 4)).astype(np.int64), np.random.random(
-                        (1, 1)).astype(np.int64),
-        np.random.random((1, 1)).astype(np.int64), np.random.random(
-            (1, 1)).astype(np.float32), np.random.random((1)).astype(np.int64),
-        np.random.random((1, 1, 4)).astype(np.float32), np.random.random(
-            (1)).astype(np.int64), np.random.random(
-                (1)).astype(np.float32), np.random.random(
-                    (1)).astype(np.float32), np.random.random(
-                        (1, 6)).astype(np.float32), np.random.random(
-                            (1)).astype(np.int64), np.random.random(
-                                (1, 6)).astype(np.float32), np.random.random(
-                                    (1, 1)).astype(np.int64)
+        np.random.random((1, 160)).astype(np.int64),
+        np.random.random((1, 160)).astype(np.int64),
+        np.random.random((1, 160, 160)).astype(np.float32),
+        np.random.random((1, 160)).astype(np.int64),
+        np.random.random((1, 1)).astype(np.int64),
+        np.random.random((1, 1)).astype(np.int64),
+        np.random.random((1, 1)).astype(np.float32),
+        np.random.random((1)).astype(np.int64),
+        np.random.random((1, 1, 160)).astype(np.float32),
+        np.random.random((1)).astype(np.int64),
+        np.random.random((1)).astype(np.float32),
+        np.random.random((1)).astype(np.float32),
+        np.random.random((1, 46256)).astype(np.float32),
+        np.random.random((1)).astype(np.int64),
+        np.random.random((1, 46256)).astype(np.float32),
+        np.random.random((10, 1)).astype(np.int64)
     ]
     outs = infer_engine.predict(whole_data)
     print(outs)
