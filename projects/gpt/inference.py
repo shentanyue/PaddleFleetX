@@ -52,8 +52,8 @@ def main():
     ids = [tokenizer.encode(input_text)]
 
     # run test
-
-    outs = infer_engine.predict([ids])
+    for i in range(0, 10):
+        outs = infer_engine.predict([ids])
     print("outs: ", outs)
     ids = list(outs.values())[0]
     out_ids = [int(x) for x in ids[0]]

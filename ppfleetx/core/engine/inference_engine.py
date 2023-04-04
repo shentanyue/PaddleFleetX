@@ -199,12 +199,18 @@ class InferenceEngine(object):
             config.set_xpu_device_id(device_id)
             config.delete_pass("multi_encoder_xpu_fuse_pass")
             config.delete_pass("embedding_with_eltwise_add_xpu_fuse_pass")
-            #config.delete_pass("fc_xpu_fuse_pass")
+            config.delete_pass("fc_xpu_fuse_pass")
             #config.delete_pass("fused_multi_transformer_xpu_quant_pass")
             config.delete_pass("embedding_with_eltwise_add_xpu_fuse_pass")
             config.delete_pass("multi_encoder_xpu_slice_fuse_pass")
             config.delete_pass("delete_isolated_node_pass")
             config.delete_pass("one_beam_size_fuse_pass")
+            config.delete_pass("delete_dropout_op_pass")
+            config.delete_pass("delete_concat_op_pass")
+            config.delete_pass("constant_folding_pass")
+            config.delete_pass("delete_cast_op_pass")
+            config.delete_pass("stack_fuse_pass")
+            config.delete_pass("inplace_op_var_pass")
             # config.enable_profile()
 
         # distributed config
@@ -278,7 +284,6 @@ class InferenceEngine(object):
             self.predictor.run()
             return {name: self.predictor.get_output_handle(name).copy_to_cpu() \
                     for name in self.output_names()}
-
 
     def predict_guanxing(self):
         # data in dict/list format
